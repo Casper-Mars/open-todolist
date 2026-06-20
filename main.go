@@ -29,6 +29,7 @@ that helps you organize projects and tasks with SQLite storage.`,
 		}
 
 		projectcmd.InitService(db)
+		projectcmd.InitTaskService(db)
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -42,6 +43,7 @@ that helps you organize projects and tasks with SQLite storage.`,
 func main() {
 	// Register subcommands before Execute so Cobra can route to them
 	projectcmd.RegisterProjectCommands(rootCmd)
+	projectcmd.RegisterTaskCommands(rootCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
