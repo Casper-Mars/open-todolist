@@ -29,6 +29,7 @@ func RegisterTaskCommands(root *cobra.Command) {
 	taskCmd.AddCommand(taskShowCmd)
 	taskCmd.AddCommand(taskUpdateCmd)
 	taskCmd.AddCommand(taskDeleteCmd)
+	taskCmd.AddCommand(taskStatusCmd)
 }
 
 var taskCmd = &cobra.Command{

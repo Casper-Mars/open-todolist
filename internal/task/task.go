@@ -526,6 +526,101 @@ func (s *Service) CheckPrerequisiteStatus(taskID string) (string, error) {
 	return "", nil
 }
 
+// SetStatus sets the status of a task with business rule validation.
+// Rules:
+//   - done tasks cannot be marked as failed
+//   - already failed tasks cannot be marked as failed again
+//   - fail_reason is required when status is "failed"
+//   - fail_reason max length is 500 characters
+//   - switching from failed to another status clears fail_reason
+func (s *Service) SetStatus(id, status, failReason string) (*TaskWithDeps, error) {
+	// Validate status value
+	validStatuses := map[string]bool{
+		"pending":     true,
+		"in_progress": true,
+		"done":        true,
+		"failed":      true,
+	}
+	if !validStatuses[status] {
+		return nil, fmt.Errorf("invalid status %q: must be one of pending, in_progress, done, failed", status)
+	}
+
+	// Fetch existing task
+	existing, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Rule: done tasks cannot be marked as failed
+	if existing.Status == "done" && status == "failed" {
+		return nil, fmt.Errorf("cannot mark a done task as failed")
+	}
+
+	// Rule: already failed tasks cannot be marked as failed again
+	if existing.Status == "failed" && status == "failed" {
+		return nil, fmt.Errorf("task is already in failed status")
+	}
+
+	// Rule: fail_reason is required when status is "failed"
+	if status == "failed" {
+		if strings.TrimSpace(failReason) == "" {
+			return nil, fmt.Errorf("fail_reason is required when setting status to failed")
+		}
+		if len(failReason) > 500 {
+			return nil, fmt.Errorf("fail_reason must not exceed 500 characters (got %d)", len(failReason))
+		}
+	}
+
+	// Rule: switching from failed to another status clears fail_reason
+	if existing.Status == "failed" && status != "failed" {
+		failReason = ""
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Build update
+	sets := []string{"status = ?", "updated_at = ?"}
+	args := []interface{}{status, now}
+
+	// Always update fail_reason (either the provided value or empty string to clear)
+	sets = append(sets, "fail_reason = ?")
+	args = append(args, failReason)
+
+	// Set completed_at when status is done
+	if status == "done" {
+		sets = append(sets, "completed_at = ?")
+		args = append(args, now)
+	}
+
+	// When setting status to in_progress, check prerequisite status
+	if status == "in_progress" {
+		if warning, err := s.CheckPrerequisiteStatus(id); err != nil {
+			return nil, err
+		} else if warning != "" {
+			fmt.Fprintln(os.Stderr, warning)
+		}
+	}
+
+	args = append(args, id)
+	_, err = s.db.Exec(
+		fmt.Sprintf(`UPDATE tasks SET %s WHERE id = ?`, strings.Join(sets, ", ")),
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("update task status: %w", err)
+	}
+
+	// Update in-memory values for the return
+	existing.Status = status
+	existing.FailReason = failReason
+	existing.UpdatedAt = now
+	if status == "done" {
+		existing.CompletedAt = now
+	}
+
+	return existing, nil
+}
+
 // isUniqueConstraintError checks if the error is a SQLite UNIQUE constraint violation.
 func isUniqueConstraintError(err error) bool {
 	if err == nil {
