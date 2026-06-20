@@ -48,8 +48,9 @@ var taskCreateCmd = &cobra.Command{
 		projectID := args[0]
 		name := args[1]
 		description, _ := cmd.Flags().GetString("description")
+		dependsOn, _ := cmd.Flags().GetString("depends_on")
 
-		t, err := taskService.Create(projectID, name, description)
+		t, err := taskService.Create(projectID, name, description, dependsOn)
 		if err != nil {
 			return err
 		}
@@ -60,6 +61,9 @@ var taskCreateCmd = &cobra.Command{
 		fmt.Printf("  Name:        %s\n", t.Name)
 		if t.Description != "" {
 			fmt.Printf("  Description: %s\n", t.Description)
+		}
+		if t.DependsOn != "" {
+			fmt.Printf("  Depends On:  %s\n", t.DependsOn)
 		}
 		fmt.Printf("  Status:      %s\n", t.Status)
 		fmt.Printf("  Created:     %s\n", t.CreatedAt)
@@ -261,6 +265,7 @@ var taskDeleteCmd = &cobra.Command{
 
 func init() {
 	taskCreateCmd.Flags().StringP("description", "d", "", "Task description")
+	taskCreateCmd.Flags().String("depends_on", "", "Task ID this task depends on")
 
 	taskListCmd.Flags().String("status", "", "Filter by status (pending, in_progress, done, failed)")
 

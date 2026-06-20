@@ -3,6 +3,7 @@ package task
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -40,7 +41,7 @@ func NewService(db *sql.DB) *Service {
 }
 
 // Create creates a new task in the given project.
-func (s *Service) Create(projectID, name, description string) (*Task, error) {
+func (s *Service) Create(projectID, name, description, dependsOn string) (*Task, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("task name cannot be empty")
 	}
@@ -69,10 +70,18 @@ func (s *Service) Create(projectID, name, description string) (*Task, error) {
 		UpdatedAt:   now,
 	}
 
+	// Check circular dependency before setting depends_on
+	if dependsOn != "" {
+		if err := s.CheckCircularDependency(projectID, t.ID, dependsOn); err != nil {
+			return nil, err
+		}
+		t.DependsOn = dependsOn
+	}
+
 	_, err = s.db.Exec(
-		`INSERT INTO tasks (id, project_id, name, description, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.ProjectID, t.Name, t.Description, t.Status, t.CreatedAt, t.UpdatedAt,
+		`INSERT INTO tasks (id, project_id, name, description, status, depends_on, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.ProjectID, t.Name, t.Description, t.Status, t.DependsOn, t.CreatedAt, t.UpdatedAt,
 	)
 	if err != nil {
 		if isUniqueConstraintError(err) {
@@ -229,8 +238,24 @@ func (s *Service) Update(id string, name, description, status, dependsOn, failRe
 			args = append(args, now)
 			existing.CompletedAt = now
 		}
+
+		// When setting status to in_progress, check prerequisite status
+		if *status == "in_progress" {
+			if warning, err := s.CheckPrerequisiteStatus(id); err != nil {
+				return nil, err
+			} else if warning != "" {
+				// Print warning but don't block
+				fmt.Fprintln(os.Stderr, warning)
+			}
+		}
 	}
 	if dependsOn != nil {
+		// Check circular dependency before setting depends_on
+		if *dependsOn != "" {
+			if err := s.CheckCircularDependency(existing.ProjectID, id, *dependsOn); err != nil {
+				return nil, err
+			}
+		}
 		existing.DependsOn = *dependsOn
 		sets = append(sets, "depends_on = ?")
 		args = append(args, existing.DependsOn)
@@ -394,6 +419,111 @@ func topologicalSort(tasks []Task) []Task {
 	}
 
 	return sorted
+}
+
+// maxCircularCheckDepth is the maximum depth to trace the depends_on chain
+// to prevent infinite loops in case of corrupted data.
+const maxCircularCheckDepth = 100
+
+// CheckSelfDependency checks if a task depends on itself.
+func CheckSelfDependency(taskID, dependsOnID string) error {
+	if taskID == dependsOnID {
+		return fmt.Errorf("circular dependency detected: task %q cannot depend on itself", taskID)
+	}
+	return nil
+}
+
+// CheckCircularDependency checks if setting taskID to depend on dependsOnID
+// would create a circular dependency chain. It traces the depends_on chain
+// upward from dependsOnID to see if it eventually reaches taskID.
+func (s *Service) CheckCircularDependency(projectID, taskID, dependsOnID string) error {
+	if dependsOnID == "" {
+		return nil
+	}
+
+	// Check self-dependency first
+	if err := CheckSelfDependency(taskID, dependsOnID); err != nil {
+		return err
+	}
+
+	// Trace the depends_on chain upward from dependsOnID
+	currentID := dependsOnID
+	visited := make(map[string]bool)
+
+	for i := 0; i < maxCircularCheckDepth; i++ {
+		// If we've reached taskID, there's a cycle
+		if currentID == taskID {
+			return fmt.Errorf("circular dependency detected: setting depends_on would create a cycle involving task %q", taskID)
+		}
+
+		// Prevent infinite loop on self-referencing chains
+		if visited[currentID] {
+			return fmt.Errorf("circular dependency detected: broken dependency chain at task %q", currentID)
+		}
+		visited[currentID] = true
+
+		// Look up the dependency of currentID
+		var nextDependsOn string
+		err := s.db.QueryRow(
+			`SELECT COALESCE(depends_on, '') FROM tasks WHERE id = ? AND project_id = ?`,
+			currentID, projectID,
+		).Scan(&nextDependsOn)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("dependency task %q not found in project", currentID)
+		}
+		if err != nil {
+			return fmt.Errorf("trace dependency chain: %w", err)
+		}
+
+		// No more dependencies — no cycle
+		if nextDependsOn == "" {
+			return nil
+		}
+
+		currentID = nextDependsOn
+	}
+
+	return fmt.Errorf("circular dependency check: exceeded maximum trace depth of %d", maxCircularCheckDepth)
+}
+
+// CheckPrerequisiteStatus checks if the task's dependency is completed.
+// Returns a warning message if the prerequisite is not done, nil otherwise.
+func (s *Service) CheckPrerequisiteStatus(taskID string) (string, error) {
+	// Get the task's depends_on
+	var dependsOnID string
+	err := s.db.QueryRow(
+		`SELECT COALESCE(depends_on, '') FROM tasks WHERE id = ?`, taskID,
+	).Scan(&dependsOnID)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("task %q not found", taskID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("query task dependency: %w", err)
+	}
+
+	if dependsOnID == "" {
+		return "", nil // No dependency, no warning
+	}
+
+	// Check prerequisite status
+	var prereqStatus string
+	var prereqName string
+	err = s.db.QueryRow(
+		`SELECT name, status FROM tasks WHERE id = ?`, dependsOnID,
+	).Scan(&prereqName, &prereqStatus)
+	if err == sql.ErrNoRows {
+		return "", nil // Dependency not found (dangling), skip warning
+	}
+	if err != nil {
+		return "", fmt.Errorf("query prerequisite task: %w", err)
+	}
+
+	if prereqStatus != "done" {
+		return fmt.Sprintf("⚠ Warning: prerequisite task %q (%s) is not completed (status: %s)",
+			prereqName, dependsOnID, prereqStatus), nil
+	}
+
+	return "", nil
 }
 
 // isUniqueConstraintError checks if the error is a SQLite UNIQUE constraint violation.
