@@ -131,7 +131,7 @@ func (s *Service) List(projectID, statusFilter string) ([]TaskWithDeps, error) {
 	// Topological sort by dependency
 	sorted := topologicalSort(tasks)
 
-	// Resolve dependency names
+	// Resolve dependency names (query DB for names not in current list)
 	taskMap := make(map[string]string)
 	for _, t := range tasks {
 		taskMap[t.ID] = t.Name
@@ -144,7 +144,14 @@ func (s *Service) List(projectID, statusFilter string) ([]TaskWithDeps, error) {
 			if name, ok := taskMap[t.DependsOn]; ok {
 				depName = name
 			} else {
-				depName = t.DependsOn
+				// Dependency not in current list, query DB
+				var name string
+				err := s.db.QueryRow(`SELECT name FROM tasks WHERE id = ?`, t.DependsOn).Scan(&name)
+				if err == nil {
+					depName = name
+				} else {
+					depName = t.DependsOn
+				}
 			}
 		}
 		result = append(result, TaskWithDeps{Task: t, DependsOnName: depName})
@@ -263,22 +270,63 @@ func (s *Service) Update(id string, name, description, status, dependsOn, failRe
 	return &TaskWithDeps{Task: existing.Task, DependsOnName: depName}, nil
 }
 
-// Delete deletes a task by ID.
-func (s *Service) Delete(id string) error {
+// DeleteResult contains the result of a task deletion.
+type DeleteResult struct {
+	Name          string
+	DependentIDs  []string // IDs of tasks that depend on the deleted task
+}
+
+// Delete deletes a task by ID. Returns the task name and any dependent task IDs.
+func (s *Service) Delete(id string) (*DeleteResult, error) {
+	// Check if other tasks depend on this one
+	deps, err := s.getDependentTasks(id)
+	if err != nil {
+		return nil, fmt.Errorf("check dependents: %w", err)
+	}
+
+	// Get task name before deletion
+	var name string
+	err = s.db.QueryRow(`SELECT name FROM tasks WHERE id = ?`, id).Scan(&name)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("task with id %q not found", id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query task name: %w", err)
+	}
+
 	result, err := s.db.Exec(`DELETE FROM tasks WHERE id = ?`, id)
 	if err != nil {
-		return fmt.Errorf("delete task: %w", err)
+		return nil, fmt.Errorf("delete task: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("check rows affected: %w", err)
+		return nil, fmt.Errorf("check rows affected: %w", err)
 	}
 	if rowsAffected == 0 {
-		return fmt.Errorf("task with id %q not found", id)
+		return nil, fmt.Errorf("task with id %q not found", id)
 	}
 
-	return nil
+	return &DeleteResult{Name: name, DependentIDs: deps}, nil
+}
+
+// getDependentTasks returns IDs of tasks that depend on the given task.
+func (s *Service) getDependentTasks(id string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT id FROM tasks WHERE depends_on = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var depID string
+		if err := rows.Scan(&depID); err != nil {
+			return nil, err
+		}
+		ids = append(ids, depID)
+	}
+	return ids, rows.Err()
 }
 
 // topologicalSort returns tasks sorted so that tasks with no dependencies come first,

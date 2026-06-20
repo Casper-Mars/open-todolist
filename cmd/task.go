@@ -243,11 +243,18 @@ var taskDeleteCmd = &cobra.Command{
 			}
 		}
 
-		if err := taskService.Delete(id); err != nil {
+		result, err := taskService.Delete(id)
+		if err != nil {
 			return err
 		}
 
-		fmt.Printf("✓ Task %q deleted\n", t.Name)
+		fmt.Printf("✓ Task %q deleted\n", result.Name)
+		if len(result.DependentIDs) > 0 {
+			fmt.Printf("⚠ Warning: %d task(s) depended on this task and now have a dangling dependency:\n", len(result.DependentIDs))
+			for _, depID := range result.DependentIDs {
+				fmt.Printf("  - %s\n", depID)
+			}
+		}
 		return nil
 	},
 }
