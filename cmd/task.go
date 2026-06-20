@@ -30,6 +30,7 @@ func RegisterTaskCommands(root *cobra.Command) {
 	taskCmd.AddCommand(taskUpdateCmd)
 	taskCmd.AddCommand(taskDeleteCmd)
 	taskCmd.AddCommand(taskStatusCmd)
+	taskCmd.AddCommand(taskNextCmd)
 }
 
 var taskCmd = &cobra.Command{

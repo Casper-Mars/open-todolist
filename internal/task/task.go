@@ -526,6 +526,109 @@ func (s *Service) CheckPrerequisiteStatus(taskID string) (string, error) {
 	return "", nil
 }
 
+// GetNext returns the next executable tasks in a project.
+// Business rules:
+//   - Queries all pending and failed tasks in the project
+//   - Pending tasks with no dependencies → executable
+//   - Pending tasks whose dependencies are done → executable
+//   - Pending tasks whose dependencies are not done → skipped
+//   - Failed tasks are always executable (regardless of dependency status)
+//   - Results are sorted by creation time (oldest first)
+func (s *Service) GetNext(projectID string) ([]TaskWithDeps, error) {
+	// Verify project exists
+	var exists bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM projects WHERE id = ?)`, projectID).Scan(&exists)
+	if err != nil {
+		return nil, fmt.Errorf("check project exists: %w", err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("project with id %q not found", projectID)
+	}
+
+	// Fetch all pending and failed tasks, ordered by creation time
+	rows, err := s.db.Query(
+		`SELECT id, project_id, name, description, status,
+		        COALESCE(depends_on,''), COALESCE(fail_reason,''),
+		        created_at, updated_at, COALESCE(completed_at,'')
+		 FROM tasks
+		 WHERE project_id = ? AND status IN ('pending', 'failed')
+		 ORDER BY created_at ASC`, projectID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var candidates []Task
+	for rows.Next() {
+		var t Task
+		if err := rows.Scan(&t.ID, &t.ProjectID, &t.Name, &t.Description, &t.Status,
+			&t.DependsOn, &t.FailReason, &t.CreatedAt, &t.UpdatedAt, &t.CompletedAt); err != nil {
+			return nil, fmt.Errorf("scan task: %w", err)
+		}
+		candidates = append(candidates, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration: %w", err)
+	}
+
+	// Filter: determine which tasks are executable
+	// Build a map of task statuses for dependency lookups
+	statusMap := make(map[string]string)
+	for _, t := range candidates {
+		statusMap[t.ID] = t.Status
+	}
+
+	var result []TaskWithDeps
+	for _, t := range candidates {
+		switch t.Status {
+		case "failed":
+			// Failed tasks are always executable
+			result = append(result, TaskWithDeps{Task: t, DependsOnName: s.resolveDepName(t.DependsOn)})
+		case "pending":
+			if t.DependsOn == "" {
+				// No dependency → executable
+				result = append(result, TaskWithDeps{Task: t, DependsOnName: ""})
+			} else {
+				// Check dependency status
+				depStatus, inCandidates := statusMap[t.DependsOn]
+				if !inCandidates {
+					// Dependency not in pending/failed list, query DB
+					err := s.db.QueryRow(`SELECT status FROM tasks WHERE id = ?`, t.DependsOn).Scan(&depStatus)
+					if err == sql.ErrNoRows {
+						// Dependency doesn't exist (dangling), treat as executable
+						result = append(result, TaskWithDeps{Task: t, DependsOnName: s.resolveDepName(t.DependsOn)})
+						continue
+					}
+					if err != nil {
+						return nil, fmt.Errorf("query dependency status: %w", err)
+					}
+				}
+				if depStatus == "done" {
+					// Dependency is done → executable
+					result = append(result, TaskWithDeps{Task: t, DependsOnName: s.resolveDepName(t.DependsOn)})
+				}
+				// Otherwise (dependency not done) → skip
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// resolveDepName resolves a dependency ID to its task name.
+func (s *Service) resolveDepName(dependsOn string) string {
+	if dependsOn == "" {
+		return ""
+	}
+	var name string
+	err := s.db.QueryRow(`SELECT name FROM tasks WHERE id = ?`, dependsOn).Scan(&name)
+	if err != nil {
+		return dependsOn // fallback to ID if not found
+	}
+	return name
+}
+
 // SetStatus sets the status of a task with business rule validation.
 // Rules:
 //   - done tasks cannot be marked as failed
