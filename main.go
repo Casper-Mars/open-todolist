@@ -11,16 +11,27 @@ import (
 )
 
 var db *database.DB
+var dbPathFlag string
+
+var version = "1.0.0"
 
 var rootCmd = &cobra.Command{
-	Use:   "otl",
-	Short: "Open Todolist - a terminal-based task manager",
-	Long: `Open Todolist (otl) is a terminal-based task management tool
+	Use:     "otl",
+	Short:   "Open Todolist - a terminal-based task manager",
+	Long:    `Open Todolist (otl) is a terminal-based task management tool
 that helps you organize projects and tasks with SQLite storage.`,
+	Version: version,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		dbPath, err := database.DefaultPath()
-		if err != nil {
-			return fmt.Errorf("get default db path: %w", err)
+		var dbPath string
+		var err error
+
+		if dbPathFlag != "" {
+			dbPath = dbPathFlag
+		} else {
+			dbPath, err = database.DefaultPath()
+			if err != nil {
+				return fmt.Errorf("get default db path: %w", err)
+			}
 		}
 
 		db, err = database.Open(dbPath)
@@ -38,6 +49,10 @@ that helps you organize projects and tasks with SQLite storage.`,
 		fmt.Printf("✓ Database initialized at %s\n", dbPath)
 		return nil
 	},
+}
+
+func init() {
+	rootCmd.PersistentFlags().StringVar(&dbPathFlag, "db", "", "Database file path (default: ~/.open-todolist/data.db)")
 }
 
 func main() {

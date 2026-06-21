@@ -45,6 +45,9 @@ func (s *Service) Create(projectID, name, description, dependsOn string) (*Task,
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("task name cannot be empty")
 	}
+	if len(name) > 200 {
+		return nil, fmt.Errorf("task name must not exceed 200 characters (got %d)", len(name))
+	}
 	if strings.TrimSpace(projectID) == "" {
 		return nil, fmt.Errorf("project ID cannot be empty")
 	}
@@ -307,6 +310,11 @@ func (s *Service) Delete(id string) (*DeleteResult, error) {
 	deps, err := s.getDependentTasks(id)
 	if err != nil {
 		return nil, fmt.Errorf("check dependents: %w", err)
+	}
+
+	// Block deletion if other tasks depend on this one
+	if len(deps) > 0 {
+		return nil, fmt.Errorf("cannot delete task: %d other task(s) depend on it (use --force to override)", len(deps))
 	}
 
 	// Get task name before deletion
@@ -662,6 +670,12 @@ func (s *Service) SetStatus(id, status, failReason string) (*TaskWithDeps, error
 	// Rule: already failed tasks cannot be marked as failed again
 	if existing.Status == "failed" && status == "failed" {
 		return nil, fmt.Errorf("task is already in failed status")
+	}
+
+	// Rule: status transition matrix validation
+	// pending can only go to in_progress
+	if existing.Status == "pending" && status != "in_progress" {
+		return nil, fmt.Errorf("cannot transition from pending to %s: pending tasks must be started first (use in_progress)", status)
 	}
 
 	// Rule: fail_reason is required when status is "failed"

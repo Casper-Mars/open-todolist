@@ -128,7 +128,11 @@ func TestGetNext_DependencyDone(t *testing.T) {
 	}
 	_ = b
 
-	// Mark A as done
+	// Mark A as done (must go through in_progress first)
+	_, err = svc.SetStatus(a.ID, "in_progress", "")
+	if err != nil {
+		t.Fatalf("SetStatus A in_progress: %v", err)
+	}
 	_, err = svc.SetStatus(a.ID, "done", "")
 	if err != nil {
 		t.Fatalf("SetStatus A done: %v", err)
@@ -161,7 +165,11 @@ func TestGetNext_FailedDependency(t *testing.T) {
 	}
 	_ = b
 
-	// Mark A as failed
+	// Mark A as failed (must go through in_progress first)
+	_, err = svc.SetStatus(a.ID, "in_progress", "")
+	if err != nil {
+		t.Fatalf("SetStatus A in_progress: %v", err)
+	}
 	_, err = svc.SetStatus(a.ID, "failed", "some error")
 	if err != nil {
 		t.Fatalf("SetStatus A failed: %v", err)
@@ -188,6 +196,10 @@ func TestGetNext_FailedHasFailReason(t *testing.T) {
 		t.Fatalf("Create A: %v", err)
 	}
 
+	_, err = svc.SetStatus(a.ID, "in_progress", "")
+	if err != nil {
+		t.Fatalf("SetStatus A in_progress: %v", err)
+	}
 	_, err = svc.SetStatus(a.ID, "failed", "connection timeout")
 	if err != nil {
 		t.Fatalf("SetStatus A failed: %v", err)

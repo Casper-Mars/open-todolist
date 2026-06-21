@@ -48,6 +48,12 @@ func (s *Service) Create(name, description string) (*Project, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("project name cannot be empty")
 	}
+	if len(name) > 100 {
+		return nil, fmt.Errorf("project name must not exceed 100 characters (got %d)", len(name))
+	}
+	if len(description) > 10000 {
+		return nil, fmt.Errorf("project description must not exceed 10000 characters (got %d)", len(description))
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	p := &Project{

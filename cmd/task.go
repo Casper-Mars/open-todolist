@@ -99,13 +99,28 @@ Use --status to filter by status (pending, in_progress, done, failed).`,
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tNAME\tSTATUS\tDEPENDS ON\tCREATED")
-		for _, t := range tasks {
-			dep := t.DependsOnName
-			if dep == "" {
-				dep = "-"
+		if status == "failed" {
+			fmt.Fprintln(w, "ID\tNAME\tSTATUS\tDEPENDS ON\tFAIL REASON\tCREATED")
+			for _, t := range tasks {
+				dep := t.DependsOnName
+				if dep == "" {
+					dep = "-"
+				}
+				failReason := t.FailReason
+				if failReason == "" {
+					failReason = "-"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", t.ID, t.Name, t.Status, dep, failReason, t.CreatedAt)
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Name, t.Status, dep, t.CreatedAt)
+		} else {
+			fmt.Fprintln(w, "ID\tNAME\tSTATUS\tDEPENDS ON\tCREATED")
+			for _, t := range tasks {
+				dep := t.DependsOnName
+				if dep == "" {
+					dep = "-"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.ID, t.Name, t.Status, dep, t.CreatedAt)
+			}
 		}
 		w.Flush()
 		return nil
