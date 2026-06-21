@@ -29,20 +29,51 @@ description: |
 
 ## 安装检查
 
-执行前先确认 `otl` 可用：
+Skill 自带多平台预编译二进制（`skill/bin/`），无需 Go 环境、无需网络。
+
+**Agent 执行前必须运行以下脚本自动选择并安装对应平台的 `otl`：**
 
 ```bash
-which otl || go install github.com/Casper-Mars/open-todolist@latest
+# 自动检测平台并安装 otl 到 PATH
+SKILL_DIR="<skill 目录的绝对路径>"
+ARCH=$(uname -m)
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+# 架构映射（arm64 统一用 arm64，x86_64 用 amd64）
+case "$ARCH" in
+  x86_64)  ARCH="amd64" ;;
+  aarch64) ARCH="arm64" ;;
+esac
+
+OTL_BIN="$SKILL_DIR/bin/otl-${OS}-${ARCH}"
+
+if [ ! -f "$OTL_BIN" ]; then
+  echo "错误：未找到平台 $OS/$ARCH 的 otl 二进制"
+  echo "可用二进制："
+  ls "$SKILL_DIR/bin/"
+  exit 1
+fi
+
+chmod +x "$OTL_BIN"
+# 创建符号链接到 PATH（优先 ~/.local/bin，无需 root）
+mkdir -p "$HOME/.local/bin"
+ln -sf "$OTL_BIN" "$HOME/.local/bin/otl"
+export PATH="$HOME/.local/bin:$PATH"
+otl --version
 ```
 
-如果 `which otl` 失败，用 `go install` 一键安装（需要 Go 1.23+）。
+**支持的平台**：
+| 平台 | 二进制文件 |
+|------|-----------|
+| Linux arm64 | `otl-linux-arm64` |
+| Linux amd64 | `otl-linux-amd64` |
+| macOS arm64 (Apple Silicon) | `otl-darwin-arm64` |
+| macOS amd64 (Intel) | `otl-darwin-amd64` |
 
-也可以从源码编译：
+**手动安装（备选）**：如果预编译二进制不可用，可以通过 Go 安装：
 
 ```bash
-git clone https://github.com/Casper-Mars/open-todolist.git
-cd open-todolist
-go build -o otl .
+go install github.com/Casper-Mars/open-todolist@latest
 ```
 
 ---
