@@ -59,6 +59,7 @@ func main() {
 	// Register subcommands before Execute so Cobra can route to them
 	projectcmd.RegisterProjectCommands(rootCmd)
 	projectcmd.RegisterTaskCommands(rootCmd)
+	rootCmd.AddCommand(projectcmd.ServeCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
