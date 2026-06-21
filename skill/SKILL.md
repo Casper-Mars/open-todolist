@@ -32,13 +32,16 @@ description: |
 执行前先确认 `otl` 可用：
 
 ```bash
-which otl || go build -o otl .
+which otl || go install github.com/Casper-Mars/open-todolist@latest
 ```
 
-如果 `which otl` 失败，从源码编译：
+如果 `which otl` 失败，用 `go install` 一键安装（需要 Go 1.23+）。
+
+也可以从源码编译：
 
 ```bash
-cd /Users/reachlucifer/project/opc/open-todolist
+git clone https://github.com/Casper-Mars/open-todolist.git
+cd open-todolist
 go build -o otl .
 ```
 
